@@ -2,9 +2,13 @@ class TaskError(Exception):
     """Базовая ошибка доменной модели задачи"""
 
 
-class TaskValidationError(TaskError):
+class ValidationError(TaskError):
     """Ошибка валидации атрибута задачи"""
 
 
-class StringValidationError(TaskValidationError):
+class StringValidationError(ValidationError):
     """Ошибка валидации строкового атрибута"""
+
+
+class IntValidationError(ValidationError):
+    """Ошибка валидации числового атрибута"""
