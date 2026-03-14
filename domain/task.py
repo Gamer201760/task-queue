@@ -2,37 +2,19 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from domain.descriptor import Int, String
-from domain.error import TaskIdValidationError, TaskStatusValidationError
+from domain.error import TaskStatusTransitionError, TaskStatusValidationError
 from domain.task_status import TaskStatus
 
 
 class Task:
     description = String(min_len=1)
     priority = Int(min_value=1)
-
-    @classmethod
-    def from_json(cls, obj: object) -> 'Task':
-        if not isinstance(obj, dict):
-            raise TypeError(
-                f'Task.from_json ожидает dict, получено: {type(obj).__name__}'
-            )
-
-        required_fields = ('id', 'description', 'priority')
-        missing_fields = [field for field in required_fields if field not in obj]
-        if missing_fields:
-            raise ValueError(
-                'Отсутствуют обязательные поля задачи: ' + ', '.join(missing_fields)
-            )
-
-        kwargs = {
-            'id': obj['id'],
-            'description': obj['description'],
-            'priority': obj['priority'],
+    _ALLOWED_STATUS_TRANSITIONS = frozenset(
+        {
+            (TaskStatus.NEW, TaskStatus.IN_PROGRESS),
+            (TaskStatus.IN_PROGRESS, TaskStatus.DONE),
         }
-        if 'status' in obj:
-            kwargs['status'] = obj['status']
-
-        return cls(**kwargs)
+    )
 
     def __init__(
         self,
@@ -40,13 +22,12 @@ class Task:
         description: str,
         priority: int,
         status: TaskStatus | str = TaskStatus.NEW,
-        created_at: datetime | None = None,
     ) -> None:
-        self._id = self._normalize_id(id)
+        self._id = UUID(str(id))
         self.description = description
         self.priority = priority
         self.status = status
-        self._created_at = self._normalize_created_at(created_at)
+        self._created_at = datetime.now(timezone.utc)
 
     @property
     def id(self) -> UUID:
@@ -58,7 +39,19 @@ class Task:
 
     @status.setter
     def status(self, value: TaskStatus | str) -> None:
-        self._status = self._normalize_status(value)
+        next_status = self._normalize_status(value)
+        current_status = getattr(
+            self, '_status', None
+        )  # При первом присваивании из __init__ атрибут _status ещё может не существовать.
+
+        if current_status is not None and current_status is not next_status:
+            transition = (current_status, next_status)
+            if transition not in self._ALLOWED_STATUS_TRANSITIONS:
+                raise TaskStatusTransitionError(
+                    f'Недопустимый переход статуса: {current_status.value} -> {next_status.value}'
+                )
+
+        self._status = next_status
 
     @property
     def created_at(self) -> datetime:
@@ -67,17 +60,6 @@ class Task:
     @property
     def is_ready(self) -> bool:
         return self._status is TaskStatus.NEW
-
-    @staticmethod
-    def _normalize_id(value: str | UUID) -> UUID:
-        if isinstance(value, UUID):
-            return value
-        if isinstance(value, str):
-            try:
-                return UUID(value)
-            except ValueError as err:
-                raise TaskIdValidationError('id должно быть валидным UUID') from err
-        raise TaskIdValidationError('id должно быть строкой UUID или UUID')
 
     @staticmethod
     def _normalize_status(value: TaskStatus | str) -> TaskStatus:
@@ -91,13 +73,3 @@ class Task:
                     f'status должно быть одним из: {", ".join(item.value for item in TaskStatus)}'
                 ) from err
         raise TaskStatusValidationError('status должно быть строкой или TaskStatus')
-
-    @staticmethod
-    def _normalize_created_at(value: datetime | None) -> datetime:
-        if value is None:
-            return datetime.now(timezone.utc)
-        if isinstance(value, datetime):
-            if value.tzinfo is None:
-                raise ValueError('created_at должно быть timezone-aware datetime')
-            return value
-        raise TypeError('created_at должно быть datetime или None')
