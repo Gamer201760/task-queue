@@ -45,7 +45,7 @@ def _expected_status(raw_status: object) -> TaskStatus:
 
 def _assert_task_matches_raw_item(task: Task, raw_item: dict[str, object]) -> None:
     assert task.description == raw_item['description']
-    assert task.priority == raw_item['priority']
+    assert task.priority == raw_item.get('priority', 1)
 
     if 'id' in raw_item:
         assert task.id == UUID(str(raw_item['id']))
@@ -200,13 +200,17 @@ def test_missing_description_raises_value_error(
         ).get_tasks()
 
 
-def test_missing_priority_raises_value_error(
+def test_missing_priority_defaults_to_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.raises(ValueError, match='priority'):
-        _source_with_raw_tasks(
-            monkeypatch, [{'description': 'Missing priority'}]
-        ).get_tasks()
+    tasks = _source_with_raw_tasks(
+        monkeypatch, [{'description': 'Missing priority'}]
+    ).get_tasks()
+
+    assert len(tasks) == 1
+    assert tasks[0].description == 'Missing priority'
+    assert tasks[0].priority == 1
+    assert tasks[0].status is TaskStatus.NEW
 
 
 def test_latency_uses_sleep_without_slowing_down_test(sleep_calls: list[float]) -> None:

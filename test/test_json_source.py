@@ -54,12 +54,12 @@ def test_get_tasks_returns_task_objects_for_valid_json_with_full_fields(
     assert tasks[1].status is TaskStatus.DONE
 
 
-def test_get_tasks_generates_uuid_and_defaults_status_when_id_is_missing(
+def test_get_tasks_generates_uuid_and_defaults_priority_and_status_when_optional_fields_are_missing(
     tmp_path: Path,
 ) -> None:
     path = _write_json_file(
         tmp_path,
-        [{'description': 'Create task from JSON', 'priority': 1}],
+        [{'description': 'Create task from JSON'}],
     )
 
     tasks = TaskJsonSource(path).get_tasks()
@@ -140,13 +140,17 @@ def test_get_tasks_raises_value_error_when_description_is_missing(
         TaskJsonSource(path).get_tasks()
 
 
-def test_get_tasks_raises_value_error_when_priority_is_missing(
+def test_get_tasks_defaults_priority_to_one_when_priority_is_missing(
     tmp_path: Path,
 ) -> None:
     path = _write_json_file(tmp_path, [{'description': 'Missing priority'}])
 
-    with pytest.raises(ValueError, match='priority'):
-        TaskJsonSource(path).get_tasks()
+    tasks = TaskJsonSource(path).get_tasks()
+
+    assert len(tasks) == 1
+    assert tasks[0].description == 'Missing priority'
+    assert tasks[0].priority == 1
+    assert tasks[0].status is TaskStatus.NEW
 
 
 def test_get_tasks_raises_permission_error_for_unreadable_file(

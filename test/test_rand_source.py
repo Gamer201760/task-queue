@@ -144,9 +144,13 @@ def test_missing_description_raises_value_error(
         ).get_tasks()
 
 
-def test_missing_priority_raises_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(ValueError, match='priority'):
-        _source_with_raw_tasks(
-            monkeypatch,
-            [{'description': 'Missing priority'}],
-        ).get_tasks()
+def test_missing_priority_defaults_to_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    tasks = _source_with_raw_tasks(
+        monkeypatch,
+        [{'description': 'Missing priority'}],
+    ).get_tasks()
+
+    assert len(tasks) == 1
+    assert tasks[0].description == 'Missing priority'
+    assert tasks[0].priority == 1
+    assert tasks[0].status is TaskStatus.NEW

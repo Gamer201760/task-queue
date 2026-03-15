@@ -20,7 +20,7 @@ class Task:
         self,
         id: str | UUID,
         description: str,
-        priority: int,
+        priority: int = 1,
         status: TaskStatus | str = TaskStatus.NEW,
     ) -> None:
         self._id = UUID(str(id))
@@ -28,6 +28,12 @@ class Task:
         self.priority = priority
         self.status = status
         self._created_at = datetime.now(timezone.utc)
+
+    def __repr__(self) -> str:
+        return (
+            f'Task(id={str(self.id)!r}, description={self.description!r}, '
+            f'priority={self.priority}, status={self.status.value!r})'
+        )
 
     @property
     def id(self) -> UUID:
@@ -42,7 +48,7 @@ class Task:
         next_status = self._normalize_status(value)
         current_status = getattr(
             self, '_status', None
-        )  # При первом присваивании из __init__ атрибут _status ещё может не существовать.
+        )  # При первом присваивании из __init__ атрибут _status ещё может не существовать
 
         if current_status is not None and current_status is not next_status:
             transition = (current_status, next_status)
@@ -70,6 +76,6 @@ class Task:
                 return TaskStatus(value)
             except ValueError as err:
                 raise TaskStatusValidationError(
-                    f'status должно быть одним из: {", ".join(item.value for item in TaskStatus)}'
+                    f'Статус должен быть одним из: {", ".join(item.value for item in TaskStatus)}'
                 ) from err
-        raise TaskStatusValidationError('status должно быть строкой или TaskStatus')
+        raise TaskStatusValidationError('Статус должен быть строкой или TaskStatus')

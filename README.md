@@ -1,141 +1,111 @@
-# Лабораторная работа №1. Источники задач и контракты
+# Лабораторная работа №2 — Дескрипторы и `property`
 
-Подсистема приёма задач в платформе обработки задач. Задачи поступают из различных источников, не связанных наследованием, но реализующих единый поведенческий контракт через `typing.Protocol`.
+## Цель
+Освоить защиту инвариантов доменной модели через пользовательские дескрипторы и `property`
 
-## Установка и запуск
+В центре проекта находится класс `Task` с безопасным публичным API, валидацией полей и контролируемыми переходами статуса
 
-Требуется Python 3.13+ и [uv](https://docs.astral.sh/uv/).
+## Модель `Task`
+- основная модель находится в [`domain/task.py`](domain/task.py)
+- перечисление статусов находится в [`domain/task_status.py`](domain/task_status.py)
+- ошибки домена находятся в [`domain/error.py`](domain/error.py)
+- `Task(id: str | UUID, description: str, priority: int = 1, status: TaskStatus | str = TaskStatus.NEW)` принимает строковый UUID или `UUID`, а внутри хранит значение как `UUID`
+- `description` и `priority` валидируются дескрипторами `String` и `Int` из [`domain/descriptor.py`](domain/descriptor.py), если `priority` не передан, используется значение `1`
+- `status` реализован через `Enum + property`, строковое значение нормализуется в `TaskStatus`, а недопустимые переходы вызывают `TaskStatusTransitionError`
+- `created_at` заполняется автоматически при создании объекта
+- `is_ready` возвращает `True`, пока задача находится в статусе `TaskStatus.NEW`
 
-### Через Makefile
+### Демонстрация дескрипторов
+- data descriptors показаны в [`domain/descriptor.py`](domain/descriptor.py) через `String` и `Int`
+- non-data descriptor показан в [`domain/non_data.py`](domain/non_data.py) через `NonDataStatusLabel`
+- учебный класс `DemoTask` показывает, что non-data descriptor можно затенить атрибутом экземпляра
 
-```bash
-make install       # установить зависимости
-make run           # запустить приложение
-make test          # запустить тесты
-make lint          # проверка линтером (ruff)
-make typecheck     # проверка типов (mypy)
-make pre-commit    # lint + typecheck + test
-```
-
-### Через uv напрямую
-
-```bash
-uv sync                                # установить зависимости
-uv run python -m adapter.cli.main      # запуск приложения
-uv run pytest -v                       # запустить тесты
-uv run ruff check .                    # линтер
-uv run mypy .                          # проверка типов
-```
-
-### Аргументы командной строки
-
-| Аргумент | По умолчанию   | Описание                            |
-| -------- | -------------- | ----------------------------------- |
-| `--file` | `./tasks.json` | Путь до файла с задачами            |
-| `--seed` | `1`            | Seed для генератора случайных задач |
-
-```bash
-uv run python -m adapter.cli.main --file path/to/tasks.json --seed 42
-make run ARGS="--file path/to/tasks.json --seed 42"
-```
-
-## Архитектура
-
-Проект следует принципам Clean Architecture. Зависимости направлены строго внутрь:
-
-```
-adapter/             точка входа (CLI)
-repository/          реализации источников задач
-  ├── api/           API заглушка
-  ├── file/          чтение из файла
-  └── generator/     программная генерация
-usecase/             бизнес логика и контракт
-domain/              ядро: сущность Task
-```
-
-**Направление зависимостей:** `adapter/ -> repository/ -> usecase/ -> domain/`
-
-Внутренние слои ничего не знают о внешних. `domain/` не импортирует никого, `usecase/` зависит только от `domain/`.
-
-### Контракт DataSource
-
-Единый контракт для всех источников задач описан через `typing.Protocol`:
-
-```python
-@runtime_checkable
-class DataSource(Protocol):
-    def get_tasks(self) -> list[Task]: ...
-```
-
-Любой класс, реализующий метод `get_tasks() -> list[Task]`, автоматически удовлетворяет контракту. Общий базовый класс не нужен (duck typing). При добавлении источника в `ProcessTasks` выполняется runtime проверка через `isinstance(src, DataSource)`.
-
-### Сущность Task
-
-```python
-@dataclass
-class Task:
-    id: int
-    payload: dict
-```
-
-Минимальная структура: идентификатор и произвольные данные.
+### Разрешённые переходы статуса
+- `new -> in_progress`
+- `in_progress -> done`
+- повторное присваивание того же статуса допустимо
 
 ## Источники задач
+- контракт источника описан в [`usecase/interface.py`](usecase/interface.py) через `DataSource`
+- обработчик источников находится в [`usecase/process.py`](usecase/process.py)
+- CLI находится в [`adapter/cli/main.py`](adapter/cli/main.py)
+- каждый источник сам преобразует сырые данные в доменный `Task`
 
-В проекте реализованы три источника, каждый из которых удовлетворяет контракту `DataSource`:
+### `TaskJsonSource`
+- реализация находится в [`repository/file/json.py`](repository/file/json.py)
+- пример входного файла находится в [`tasks.json`](tasks.json)
+- источник читает JSON-файл и ожидает корневой список объектов
+- обязательные поля элемента: `description`
+- опциональные поля: `id`, `priority`, `status`
+- если `id` отсутствует, источник генерирует `uuid4()`
+- если `priority` отсутствует, используется значение `1`
+- если `status` отсутствует, используется значение по умолчанию из `Task`
 
-### 1. Загрузка из файла (`TaskJsonSource`)
+Пример элемента JSON
 
-Читает задачи из JSON файла с валидацией формата.
-
-```python
-source = TaskJsonSource('./tasks.json')
-tasks = source.get_tasks()  # -> [Task(id=33, payload={...}), Task(id=1233, payload={...})]
+```json
+{
+  "description": "Подготовить отчёт",
+  "priority": 2,
+  "id": "12345678-1234-5678-1234-567812345678",
+  "status": "in_progress"
+}
 ```
 
-**Расположение:** [`repository/file/json.py`](repository/file/json.py)
+### `MockExternalSource`
+- реализация находится в [`repository/api/mock.py`](repository/api/mock.py)
+- источник имитирует внешний API
+- получает сырой список задач во внутреннем `_fetch_tasks()`
+- преобразует каждый словарь в `Task`
+- при отсутствии `id` генерирует новый UUID
+- при отсутствии `priority` использует `1`
+- при отсутствии `status` оставляет значение по умолчанию
 
-### 2. Программная генерация (`RandomJobsSource`)
+### `RandomJobsSource`
+- реализация находится в [`repository/generator/rand.py`](repository/generator/rand.py)
+- источник генерирует сырые записи задач с помощью `random.Random`
+- затем преобразует их в `Task`
+- создаёт UUID и случайные поля так, чтобы результат был воспроизводим при одинаковом seed
+- поддерживает проверку обязательных полей до создания доменного объекта
+- если `priority` отсутствует в сырой записи, использует `1`
 
-Генерирует случайные задачи с данными о температуре и влажности.
+## Запуск и проверки
+Требуется Python 3.13+ и `uv`
 
-```python
-source = RandomJobsSource(Random(42))
-tasks = source.get_tasks()  # -> [Task(id=..., payload={'temperature': ..., 'humidity': ...}), ...]
+### Через `make`
+
+```bash
+make install
+make run
+make test
+make lint
+make typecheck
+make pre-commit
 ```
 
-**Расположение:** [`repository/generator/rand.py`](repository/generator/rand.py)
+### Через `uv`
 
-### 3. API заглушка (`MockExternalSource`)
-
-Имитирует внешний источник задач с сетевой задержкой (`time.sleep`).
-
-```python
-source = MockExternalSource()
-tasks = source.get_tasks()  # -> [Task(id=1, payload={'palka': 'copalka'})]
+```bash
+uv sync
+uv run python -m adapter.cli.main
+uv run pytest -v
+uv run ruff check .
+uv run mypy .
 ```
 
-**Расположение:** [`repository/api/mock.py`](repository/api/mock.py)
+### Аргументы CLI
+- `--file` — путь до JSON-файла с задачами, по умолчанию `./tasks.json`
+- `--seed` — seed для `RandomJobsSource`, по умолчанию `1`
 
-## Как добавить новый источник
+Пример запуска
 
-Достаточно создать класс с методом `get_tasks() -> list[Task]`. Наследование не требуется:
-
-```python
-# repository/my_source/source.py
-from domain.task import Task
-
-class MyNewSource:
-    def get_tasks(self) -> list[Task]:
-        return [Task(id=999, payload={'key': 'value'})]
+```bash
+uv run python -m adapter.cli.main --file ./tasks.json --seed 42
 ```
 
-После этого источник можно передать в `ProcessTasks`:
-
-```python
-process = ProcessTasks()
-process.add_source(MyNewSource())  # isinstance проверка пройдёт автоматически
-process.execute()
-```
-
-Существующий код изменять не нужно (Open/Closed Principle).
+## Тесты
+- тесты дескрипторов находятся в [`test/test_string_descriptor.py`](test/test_string_descriptor.py) и [`test/test_int_descriptor.py`](test/test_int_descriptor.py)
+- тест non-data descriptor находится в [`test/test_non_data_descriptor.py`](test/test_non_data_descriptor.py)
+- прямые тесты модели `Task` находятся в [`test/test_task.py`](test/test_task.py) и [`test/test_task_default_priority.py`](test/test_task_default_priority.py)
+- тесты источников находятся в [`test/test_json_source.py`](test/test_json_source.py), [`test/test_mock_source.py`](test/test_mock_source.py) и [`test/test_rand_source.py`](test/test_rand_source.py)
+- покрываются UUID, статусы, обязательные поля, значения по умолчанию и ошибки валидации

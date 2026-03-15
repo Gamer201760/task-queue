@@ -14,10 +14,6 @@ class IntValidationError(ValidationError):
     """Ошибка валидации числового атрибута"""
 
 
-class TaskIdValidationError(ValidationError):
-    """Ошибка валидации идентификатора задачи"""
-
-
 class TaskStatusValidationError(ValidationError):
     """Ошибка валидации статуса задачи"""
 

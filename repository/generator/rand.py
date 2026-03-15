@@ -37,18 +37,18 @@ class RandomJobsSource:
         return raw_tasks
 
     def _generate_task_id(self) -> UUID:
-        return UUID(int=self._rnd.getrandbits(128), version=4)
+        return UUID(
+            int=self._rnd.getrandbits(128), version=4
+        )  # Нужно для повторяемости тестов
 
     def _task_from_raw(self, raw_task: object) -> Task:
         if not isinstance(raw_task, dict):
-            raise TypeError('Each raw task must be a dict')
+            raise TypeError('Каждая запись задачи должна быть словарём')
 
-        missing_fields = [
-            field for field in ('description', 'priority') if field not in raw_task
-        ]
+        missing_fields = [field for field in ('description',) if field not in raw_task]
         if missing_fields:
             raise ValueError(
-                'Missing required task fields: ' + ', '.join(missing_fields)
+                'Отсутствуют обязательные поля задачи: ' + ', '.join(missing_fields)
             )
 
         task_id = (
@@ -57,7 +57,7 @@ class RandomJobsSource:
             else self._generate_task_id()
         )
         description = cast(str, raw_task['description'])
-        priority = cast(int, raw_task['priority'])
+        priority = cast(int, raw_task.get('priority', 1))
 
         if 'status' in raw_task:
             return Task(

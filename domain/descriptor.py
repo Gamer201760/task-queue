@@ -68,7 +68,7 @@ class Int:
         except AttributeError:
             raise AttributeError(
                 f'атрибут {self._attr[1:]!r} ещё не инициализирован'
-            ) from None  # from None нужен, чтобы прервать цепочку ошибок, мы скрываем их от пользователя
+            ) from None  # from None нужен, чтобы прервать цепочку ошибок мы скрываем их от пользователя
 
     def __set__(self, obj: object, value: object) -> None:
         if not isinstance(value, int):

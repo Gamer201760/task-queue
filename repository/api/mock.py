@@ -25,30 +25,29 @@ class MockExternalSource:
 
         for item in self._fetch_tasks():
             if not isinstance(item, dict):
-                raise TypeError('Each raw task must be a dict')
+                raise TypeError('Каждая запись задачи должна быть словарём')
 
-            missing_fields = [
-                field for field in ('description', 'priority') if field not in item
-            ]
+            missing_fields = [field for field in ('description',) if field not in item]
             if missing_fields:
                 raise ValueError(
-                    'Missing required task fields: ' + ', '.join(missing_fields)
+                    'Отсутствуют обязательные поля задачи: ' + ', '.join(missing_fields)
                 )
 
             task_id = item['id'] if 'id' in item else uuid4()
+            priority = item.get('priority', 1)
 
             if 'status' in item:
                 task = Task(
                     task_id,
                     item['description'],
-                    item['priority'],
+                    priority,
                     item['status'],
                 )
             else:
                 task = Task(
                     task_id,
                     item['description'],
-                    item['priority'],
+                    priority,
                 )
 
             tasks.append(task)

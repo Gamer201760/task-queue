@@ -33,25 +33,27 @@ class TaskJsonSource:
             if not isinstance(item, dict):
                 raise TypeError('Каждый элемент JSON должен быть объектом задачи')
 
-            required_fields = ('description', 'priority')
+            required_fields = ('description',)
             missing_fields = [field for field in required_fields if field not in item]
             if missing_fields:
                 raise ValueError(
                     'Отсутствуют обязательные поля задачи: ' + ', '.join(missing_fields)
                 )
 
+            priority = item.get('priority', 1)
+
             if 'status' in item:
                 task = Task(
                     item.get('id', uuid4()),
                     item['description'],
-                    item['priority'],
+                    priority,
                     item['status'],
                 )
             else:
                 task = Task(
                     item.get('id', uuid4()),
                     item['description'],
-                    item['priority'],
+                    priority,
                 )
 
             tasks.append(task)
