@@ -1,19 +1,17 @@
 [
     {
-        "id": 33,
-        "payload": {
-            "int": 123,
-            "str": "Hello world!"
-        }
+        "id": "12345678-1234-5678-1234-567812345678",
+        "description": "Проверить входные данные JSON-источника",
+        "priority": 2,
+        "status": "new"
     },
     {
-        "id": 1233,
-        "payload": {
-            "list": [
-                123,
-                456,
-                789
-            ]
-        }
+        "id": "87654321-4321-8765-4321-876543218765",
+        "description": "Обновить статус задачи после обработки",
+        "priority": 3,
+        "status": "in_progress"
+    },
+    {
+        "description": "palka"
     }
 ]

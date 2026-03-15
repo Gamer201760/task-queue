@@ -1,32 +1,81 @@
-from dataclasses import dataclass
+from datetime import datetime, timezone
+from uuid import UUID
+
+from domain.descriptor import Int, String
+from domain.error import TaskStatusTransitionError, TaskStatusValidationError
+from domain.task_status import TaskStatus
 
 
-@dataclass
 class Task:
-    id: int
-    payload: dict
+    description = String(min_len=1)
+    priority = Int(min_value=1)
+    _ALLOWED_STATUS_TRANSITIONS = frozenset(
+        {
+            (TaskStatus.NEW, TaskStatus.IN_PROGRESS),
+            (TaskStatus.IN_PROGRESS, TaskStatus.DONE),
+        }
+    )
 
-    # Фабрика из сырого JSON объекта с валидацией
-    @classmethod
-    def from_json(cls, obj: object) -> 'Task':
-        if not isinstance(obj, dict):
-            raise TypeError(f'Task JSON must be an object, got {type(obj).__name__}')
+    def __init__(
+        self,
+        id: str | UUID,
+        description: str,
+        priority: int = 1,
+        status: TaskStatus | str = TaskStatus.NEW,
+    ) -> None:
+        self._id = UUID(str(id))
+        self.description = description
+        self.priority = priority
+        self.status = status
+        self._created_at = datetime.now(timezone.utc)
 
-        if 'id' not in obj:
-            raise ValueError("Не найден параметер 'id'")
-        if 'payload' not in obj:
-            raise ValueError("Не найден параметер 'payload'")
+    def __repr__(self) -> str:
+        return (
+            f'Task(id={str(self.id)!r}, description={self.description!r}, '
+            f'priority={self.priority}, status={self.status.value!r})'
+        )
 
-        task_id = obj['id']
-        payload = obj['payload']
+    @property
+    def id(self) -> UUID:
+        return self._id
 
-        if not isinstance(task_id, int):
-            raise TypeError(
-                f'Task.id должен быть int, получили {type(task_id).__name__}'
-            )
-        if not isinstance(payload, dict):
-            raise TypeError(
-                f'Task.payload должен быть dict, получили {type(payload).__name__}'
-            )
+    @property
+    def status(self) -> TaskStatus:
+        return self._status
 
-        return cls(id=task_id, payload=payload)
+    @status.setter
+    def status(self, value: TaskStatus | str) -> None:
+        next_status = self._normalize_status(value)
+        current_status = getattr(
+            self, '_status', None
+        )  # При первом присваивании из __init__ атрибут _status ещё может не существовать
+
+        if current_status is not None and current_status is not next_status:
+            transition = (current_status, next_status)
+            if transition not in self._ALLOWED_STATUS_TRANSITIONS:
+                raise TaskStatusTransitionError(
+                    f'Недопустимый переход статуса: {current_status.value} -> {next_status.value}'
+                )
+
+        self._status = next_status
+
+    @property
+    def created_at(self) -> datetime:
+        return self._created_at
+
+    @property
+    def is_ready(self) -> bool:
+        return self._status is TaskStatus.NEW
+
+    @staticmethod
+    def _normalize_status(value: TaskStatus | str) -> TaskStatus:
+        if isinstance(value, TaskStatus):
+            return value
+        if isinstance(value, str):
+            try:
+                return TaskStatus(value)
+            except ValueError as err:
+                raise TaskStatusValidationError(
+                    f'Статус должен быть одним из: {", ".join(item.value for item in TaskStatus)}'
+                ) from err
+        raise TaskStatusValidationError('Статус должен быть строкой или TaskStatus')

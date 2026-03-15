@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from uuid import uuid4
 
 from domain.task import Task
 
@@ -14,23 +15,47 @@ class TaskJsonSource:
         if not self._path.is_file():
             raise IsADirectoryError(f'Ожидался файл, но получен каталог: {self._path}')
 
-        # Чтение файла и парсинг JSON
         try:
-            text = self._path.read_text(encoding='utf-8')
-        except OSError as e:
-            raise OSError(f'Не удалось прочитать файл с задачами: {self._path}') from e
-
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as e:
+            with self._path.open(encoding='utf-8') as file:
+                raw_tasks = json.load(file)
+        except json.JSONDecodeError as err:
             raise ValueError(
                 f'Некорректный JSON в файле с задачами: {self._path}'
-            ) from e
+            ) from err
 
-        if not isinstance(data, list):
+        if not isinstance(raw_tasks, list):
             raise TypeError(
-                f'Корневой элемент JSON должен быть списком задач, получено: {type(data).__name__}'
+                f'Корневой элемент JSON должен быть списком задач, получено: {type(raw_tasks).__name__}'
             )
 
-        # Каждый элемент массива превращаем в Task
-        return [Task.from_json(item) for item in data]
+        tasks: list[Task] = []
+        for item in raw_tasks:
+            if not isinstance(item, dict):
+                raise TypeError('Каждый элемент JSON должен быть объектом задачи')
+
+            required_fields = ('description',)
+            missing_fields = [field for field in required_fields if field not in item]
+            if missing_fields:
+                raise ValueError(
+                    'Отсутствуют обязательные поля задачи: ' + ', '.join(missing_fields)
+                )
+
+            priority = item.get('priority', 1)
+
+            if 'status' in item:
+                task = Task(
+                    item.get('id', uuid4()),
+                    item['description'],
+                    priority,
+                    item['status'],
+                )
+            else:
+                task = Task(
+                    item.get('id', uuid4()),
+                    item['description'],
+                    priority,
+                )
+
+            tasks.append(task)
+
+        return tasks
