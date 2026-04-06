@@ -1,5 +1,7 @@
+from itertools import chain
 from logging import getLogger
 
+from domain.task_queue import TaskQueue
 from usecase.interface import DataSource
 
 logger = getLogger(__name__)
@@ -17,8 +19,17 @@ class ProcessTasks:
                 f'Источник {src.__class__.__name__} должен соотвествовать контракту DataSource'
             )
 
-    def execute(self) -> None:
-        for src in self._sources:
-            logger.info(
-                f'Process tasks from {src.__class__.__name__}: {src.get_tasks()}'
-            )
+    def build_queue(self) -> TaskQueue:
+        source_queues = tuple(src.get_tasks() for src in self._sources)
+
+        return TaskQueue(lambda: chain.from_iterable(source_queues))
+
+    def execute(self, queue: TaskQueue | None = None) -> None:
+        tasks = queue if queue is not None else self.build_queue()
+
+        processed_count = 0
+        for task in tasks:
+            processed_count += 1
+            logger.info('Process task: %s', task)
+
+        logger.info('Processed tasks: %s', processed_count)

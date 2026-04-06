@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from domain.descriptor import Int, String
-from domain.error import TaskStatusTransitionError, TaskStatusValidationError
+from domain.error import TaskStatusTransitionError
 from domain.task_status import TaskStatus
 
 
@@ -45,7 +45,7 @@ class Task:
 
     @status.setter
     def status(self, value: TaskStatus | str) -> None:
-        next_status = self._normalize_status(value)
+        next_status = TaskStatus.normalize(value)
         current_status = getattr(
             self, '_status', None
         )  # При первом присваивании из __init__ атрибут _status ещё может не существовать
@@ -66,16 +66,3 @@ class Task:
     @property
     def is_ready(self) -> bool:
         return self._status is TaskStatus.NEW
-
-    @staticmethod
-    def _normalize_status(value: TaskStatus | str) -> TaskStatus:
-        if isinstance(value, TaskStatus):
-            return value
-        if isinstance(value, str):
-            try:
-                return TaskStatus(value)
-            except ValueError as err:
-                raise TaskStatusValidationError(
-                    f'Статус должен быть одним из: {", ".join(item.value for item in TaskStatus)}'
-                ) from err
-        raise TaskStatusValidationError('Статус должен быть строкой или TaskStatus')

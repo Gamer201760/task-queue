@@ -1,5 +1,4 @@
 import time
-from typing import cast
 from uuid import UUID
 
 import pytest
@@ -7,8 +6,22 @@ import pytest
 import repository.api.mock as mock_module
 from domain.error import TaskStatusValidationError
 from domain.task import Task
+from domain.task_queue import TaskQueue
 from domain.task_status import TaskStatus
 from repository.api.mock import MockExternalSource
+
+DEFAULT_RAW_TASKS: list[dict[str, object]] = [
+    {
+        'description': 'Check external queue',
+        'priority': 1,
+    },
+    {
+        'id': 'f3a9b7f7-3b23-4f87-aef7-1d22d587d9f1',
+        'description': 'Sync remote task state',
+        'priority': 2,
+        'status': 'in_progress',
+    },
+]
 
 
 @pytest.fixture(autouse=True)
@@ -28,12 +41,19 @@ def sleep_calls(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return calls
 
 
-def _source_with_raw_tasks(
-    monkeypatch: pytest.MonkeyPatch,
-    raw_tasks: list[object],
-) -> MockExternalSource:
+def _source_with_raw_tasks(raw_tasks: list[object]) -> MockExternalSource:
     source = MockExternalSource()
-    monkeypatch.setattr(source, '_fetch_tasks', lambda: raw_tasks)
+
+    def get_tasks() -> TaskQueue:
+        stored_raw_tasks = list(raw_tasks)
+
+        def iter_tasks():
+            for item in stored_raw_tasks:
+                yield source._task_from_raw(item)
+
+        return TaskQueue(iter_tasks)
+
+    source.get_tasks = get_tasks  # type: ignore[method-assign]
     return source
 
 
@@ -58,19 +78,21 @@ def _assert_task_matches_raw_item(task: Task, raw_item: dict[str, object]) -> No
         assert task.status is TaskStatus.NEW
 
 
-def test_get_tasks_returns_non_empty_list_of_task() -> None:
-    tasks = MockExternalSource().get_tasks()
+def _collect_tasks(source: MockExternalSource) -> list[Task]:
+    return list(source.get_tasks())
+
+
+def test_get_tasks_returns_non_empty_iterable_of_tasks() -> None:
+    tasks = _collect_tasks(MockExternalSource())
 
     assert tasks
     assert all(isinstance(task, Task) for task in tasks)
 
 
-def test_default_raw_payload_maps_to_task_fields_correctly(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    raw_tasks = cast(list[dict[str, object]], MockExternalSource()._fetch_tasks())
-    source = _source_with_raw_tasks(monkeypatch, list(raw_tasks))
-    tasks = source.get_tasks()
+def test_default_raw_payload_maps_to_task_fields_correctly() -> None:
+    raw_tasks = [dict(item) for item in DEFAULT_RAW_TASKS]
+    source = MockExternalSource()
+    tasks = _collect_tasks(source)
 
     assert len(tasks) == len(raw_tasks)
     for task, raw_item in zip(tasks, raw_tasks, strict=True):
@@ -83,44 +105,43 @@ def test_generated_task_ids_are_uuid_backed_when_id_is_missing(
     generated_id = UUID('12345678-1234-5678-1234-567812345678')
     monkeypatch.setattr(mock_module, 'uuid4', lambda: generated_id, raising=False)
 
-    tasks = _source_with_raw_tasks(
-        monkeypatch,
-        [{'description': 'Create task from mock source', 'priority': 1}],
-    ).get_tasks()
+    tasks = _collect_tasks(
+        _source_with_raw_tasks(
+            [{'description': 'Create task from mock source', 'priority': 1}],
+        )
+    )
 
     assert len(tasks) == 1
     assert tasks[0].id == generated_id
     assert isinstance(tasks[0].id, UUID)
 
 
-def test_missing_status_defaults_to_task_status_new(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    tasks = _source_with_raw_tasks(
-        monkeypatch,
-        [{'description': 'Default status task', 'priority': 2}],
-    ).get_tasks()
+def test_missing_status_defaults_to_task_status_new() -> None:
+    tasks = _collect_tasks(
+        _source_with_raw_tasks(
+            [{'description': 'Default status task', 'priority': 2}],
+        )
+    )
 
     assert len(tasks) == 1
     assert tasks[0].status is TaskStatus.NEW
 
 
-def test_explicit_id_and_status_are_preserved_after_mapping(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_explicit_id_and_status_are_preserved_after_mapping() -> None:
     explicit_id = '87654321-4321-8765-4321-876543218765'
 
-    tasks = _source_with_raw_tasks(
-        monkeypatch,
-        [
-            {
-                'id': explicit_id,
-                'description': 'Explicit status task',
-                'priority': 3,
-                'status': 'done',
-            }
-        ],
-    ).get_tasks()
+    tasks = _collect_tasks(
+        _source_with_raw_tasks(
+            [
+                {
+                    'id': explicit_id,
+                    'description': 'Explicit status task',
+                    'priority': 3,
+                    'status': 'done',
+                }
+            ],
+        )
+    )
 
     assert len(tasks) == 1
     assert tasks[0].id == UUID(explicit_id)
@@ -137,75 +158,68 @@ def test_explicit_id_path_does_not_call_uuid_generator(
         raising=False,
     )
 
-    tasks = _source_with_raw_tasks(
-        monkeypatch,
-        [
-            {
-                'id': '87654321-4321-8765-4321-876543218765',
-                'description': 'Existing id task',
-                'priority': 3,
-                'status': 'done',
-            }
-        ],
-    ).get_tasks()
+    tasks = _collect_tasks(
+        _source_with_raw_tasks(
+            [
+                {
+                    'id': '87654321-4321-8765-4321-876543218765',
+                    'description': 'Existing id task',
+                    'priority': 3,
+                    'status': 'done',
+                }
+            ],
+        )
+    )
 
     assert len(tasks) == 1
     assert tasks[0].id == UUID('87654321-4321-8765-4321-876543218765')
 
 
-def test_invalid_explicit_id_propagates_uuid_validation_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_invalid_explicit_id_propagates_uuid_validation_error() -> None:
     with pytest.raises(ValueError):
-        _source_with_raw_tasks(
-            monkeypatch,
-            [
-                {
-                    'id': 'not-a-uuid',
-                    'description': 'Bad id task',
-                    'priority': 2,
-                }
-            ],
-        ).get_tasks()
+        list(
+            _source_with_raw_tasks(
+                [
+                    {
+                        'id': 'not-a-uuid',
+                        'description': 'Bad id task',
+                        'priority': 2,
+                    }
+                ],
+            ).get_tasks()
+        )
 
 
-def test_invalid_explicit_status_propagates_status_validation_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_invalid_explicit_status_propagates_status_validation_error() -> None:
     with pytest.raises(TaskStatusValidationError):
-        _source_with_raw_tasks(
-            monkeypatch,
-            [
-                {
-                    'id': '87654321-4321-8765-4321-876543218765',
-                    'description': 'Bad status task',
-                    'priority': 2,
-                    'status': 'paused',
-                }
-            ],
-        ).get_tasks()
+        list(
+            _source_with_raw_tasks(
+                [
+                    {
+                        'id': '87654321-4321-8765-4321-876543218765',
+                        'description': 'Bad status task',
+                        'priority': 2,
+                        'status': 'paused',
+                    }
+                ],
+            ).get_tasks()
+        )
 
 
-def test_non_dict_raw_items_raise_type_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_dict_raw_items_raise_type_error() -> None:
     with pytest.raises(TypeError):
-        _source_with_raw_tasks(monkeypatch, ['not-a-task-mapping']).get_tasks()
+        list(_source_with_raw_tasks(['not-a-task-mapping']).get_tasks())
 
 
-def test_missing_description_raises_value_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_missing_description_raises_value_error() -> None:
     with pytest.raises(ValueError, match='description'):
-        _source_with_raw_tasks(
-            monkeypatch, [{'priority': 4, 'status': 'new'}]
-        ).get_tasks()
+        list(_source_with_raw_tasks([{'priority': 4, 'status': 'new'}]).get_tasks())
 
 
-def test_missing_priority_defaults_to_one(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    tasks = _source_with_raw_tasks(
-        monkeypatch, [{'description': 'Missing priority'}]
-    ).get_tasks()
+def test_missing_priority_defaults_to_one() -> None:
+    tasks = _collect_tasks(
+        _source_with_raw_tasks([{'description': 'Missing priority'}])
+    )
 
     assert len(tasks) == 1
     assert tasks[0].description == 'Missing priority'
@@ -214,7 +228,7 @@ def test_missing_priority_defaults_to_one(
 
 
 def test_latency_uses_sleep_without_slowing_down_test(sleep_calls: list[float]) -> None:
-    tasks = MockExternalSource().get_tasks()
+    tasks = _collect_tasks(MockExternalSource())
 
     assert tasks
     assert sleep_calls == [1]
