@@ -1,8 +1,8 @@
 from random import Random
-from typing import cast
 from uuid import UUID
 
 from domain.task import Task
+from domain.task_queue import TaskQueue
 from domain.task_status import TaskStatus
 
 
@@ -51,25 +51,32 @@ class RandomJobsSource:
                 'Отсутствуют обязательные поля задачи: ' + ', '.join(missing_fields)
             )
 
-        task_id = (
-            cast(str | UUID, raw_task['id'])
-            if 'id' in raw_task
-            else self._generate_task_id()
+        if 'id' not in raw_task:
+            raw_task['id'] = self._generate_task_id()
+
+        priority = raw_task.get('priority', 1)
+        status = raw_task.get('status', TaskStatus.NEW)
+
+        return Task(
+            raw_task['id'],
+            raw_task['description'],
+            priority,
+            status,
         )
-        description = cast(str, raw_task['description'])
-        priority = cast(int, raw_task.get('priority', 1))
 
-        if 'status' in raw_task:
-            return Task(
-                task_id,
-                description,
-                priority,
-                cast(TaskStatus | str, raw_task['status']),
-            )
+    def get_tasks(self) -> TaskQueue:
+        payload: list[object] | None = None
 
-        return Task(task_id, description, priority)
+        def load_raw_tasks() -> list[object]:
+            nonlocal payload
 
-    def get_tasks(self) -> list[Task]:
-        return [
-            self._task_from_raw(raw_task) for raw_task in self._generate_raw_tasks()
-        ]
+            if payload is None:
+                payload = list(self._generate_raw_tasks())
+
+            return payload
+
+        def iter_tasks():
+            for raw_task in load_raw_tasks():
+                yield self._task_from_raw(raw_task)
+
+        return TaskQueue(iter_tasks)
