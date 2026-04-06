@@ -105,6 +105,22 @@ def test_invalid_status_string_raises_validation_error() -> None:
         make_task(status='blocked')
 
 
+def test_task_status_normalize_preserves_validation_messages() -> None:
+    assert TaskStatus.normalize('done') is TaskStatus.DONE
+
+    with pytest.raises(
+        TaskStatusValidationError,
+        match='Статус должен быть одним из: new, in_progress, done',
+    ):
+        TaskStatus.normalize('blocked')
+
+    with pytest.raises(
+        TaskStatusValidationError,
+        match='Статус должен быть строкой или TaskStatus',
+    ):
+        TaskStatus.normalize(123)  # type: ignore[arg-type]
+
+
 def test_is_ready_becomes_false_after_leaving_new_status() -> None:
     task = make_task()
 
