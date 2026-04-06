@@ -1,82 +1,77 @@
-# Лабораторная работа №2 — Дескрипторы и `property`
+# Лабораторная работа №3 — Очередь задач (`TaskQueue`)
 
 ## Цель
-Освоить защиту инвариантов доменной модели через пользовательские дескрипторы и `property`
-
-В центре проекта находится класс `Task` с безопасным публичным API, валидацией полей и контролируемыми переходами статуса
+Научиться строить ленивые коллекции задач, совместимые со стандартными конструкциями Python, и обеспечивать повторяемую итерацию без преждевременного накопления данных
 
 ## Модель `Task`
-- основная модель находится в [`domain/task.py`](domain/task.py)
-- перечисление статусов находится в [`domain/task_status.py`](domain/task_status.py)
-- ошибки домена находятся в [`domain/error.py`](domain/error.py)
-- `Task(id: str | UUID, description: str, priority: int = 1, status: TaskStatus | str = TaskStatus.NEW)` принимает строковый UUID или `UUID`, а внутри хранит значение как `UUID`
-- `description` и `priority` валидируются дескрипторами `String` и `Int` из [`domain/descriptor.py`](domain/descriptor.py), если `priority` не передан, используется значение `1`
-- `status` реализован через `Enum + property`, строковое значение нормализуется в `TaskStatus`, а недопустимые переходы вызывают `TaskStatusTransitionError`
-- `created_at` заполняется автоматически при создании объекта
-- `is_ready` возвращает `True`, пока задача находится в статусе `TaskStatus.NEW`
+- основная модель описана в [`domain/task.py`](domain/task.py)
+- статусы перечислены в [`domain/task_status.py`](domain/task_status.py)
+- исключения домена (`TaskStatusValidationError`, `TaskStatusTransitionError`) и дескрипторы находятся в `domain`
+- `Task` принимает `id`, `description`, `priority` и `status`, нормализует строковые статусы и обеспечивает допустимые переходы
 
-### Демонстрация дескрипторов
-- data descriptors показаны в [`domain/descriptor.py`](domain/descriptor.py) через `String` и `Int`
-- non-data descriptor показан в [`domain/non_data.py`](domain/non_data.py) через `NonDataStatusLabel`
-- учебный класс `DemoTask` показывает, что non-data descriptor можно затенить атрибутом экземпляра
+## Очередь задач `TaskQueue`
+- реализация находится в [`domain/task_queue.py`](domain/task_queue.py)
+- поддерживает повторяемую итерацию через фабрику итераторов или повторно итерируемый источник
+- ленивые фильтры `filter_by_status(...)` и `filter_by_priority(...)` возвращают новый `TaskQueue`, при этом задачи создаются по мере обхода
+- совместима с `for`, `list`, `sum` и любыми другими API, работающими с `Iterable`
+- пример использования:
 
-### Разрешённые переходы статуса
-- `new -> in_progress`
-- `in_progress -> done`
-- повторное присваивание того же статуса допустимо
+```python
+from domain.task_queue import TaskQueue
+from domain.task_status import TaskStatus
+
+queue = TaskQueue([...])  # любой повторяемый источник или iterator factory
+
+for task in queue:
+    print(task.description)
+
+tasks = list(queue)
+total_priority = sum(task.priority for task in queue)
+
+filtered = queue.filter_by_status(TaskStatus.IN_PROGRESS).filter_by_priority(min_priority=2)
+```
+
+Фильтрация происходит лениво, новые итерации каждого `TaskQueue` заново создают источник, поэтому `queue` и `filtered` можно обходить многократно
 
 ## Источники задач
 - контракт источника описан в [`usecase/interface.py`](usecase/interface.py) через `DataSource`
-- обработчик источников находится в [`usecase/process.py`](usecase/process.py)
-- CLI находится в [`adapter/cli/main.py`](adapter/cli/main.py)
-- каждый источник сам преобразует сырые данные в доменный `Task`
+- обработка коллекции реализована в [`usecase/process.py`](usecase/process.py), `ProcessTasks.build_queue()` объединяет источники с помощью `itertools.chain` и возвращает `TaskQueue`
+- `MockExternalSource` (`repository/api/mock.py`) имитирует внешний API, создаёт `Task` из полученных словарей и добавляет UUID/статус по умолчанию
+- `TaskJsonSource` (`repository/file/json.py`) читает JSONL-файл `tasks.jsonl`, ожидает по одному JSON-объекту задачи на строку, проверяет обязательные поля, поддерживает `id`, `priority`, `status` и создаёт доменные `Task` по мере обхода очереди
+- `RandomJobsSource` (`repository/generator/rand.py`) генерирует повторяемый набор сырого описания задач, преобразует в `Task` и возвращает `TaskQueue`
 
-### `TaskJsonSource`
-- реализация находится в [`repository/file/json.py`](repository/file/json.py)
-- пример входного файла находится в [`tasks.json`](tasks.json)
-- источник читает JSON-файл и ожидает корневой список объектов
-- обязательные поля элемента: `description`
-- опциональные поля: `id`, `priority`, `status`
-- если `id` отсутствует, источник генерирует `uuid4()`
-- если `priority` отсутствует, используется значение `1`
-- если `status` отсутствует, используется значение по умолчанию из `Task`
+Все источники возвращают `TaskQueue`, поэтому создание доменных `Task` происходит лениво во время обхода. Для JSONL-источника это означает чтение файла построчно без кэширования всего содержимого: каждый новый обход очереди заново открывает файл и читает его сначала
 
-Пример элемента JSON
+Пример `tasks.jsonl`:
 
 ```json
-{
-  "description": "Подготовить отчёт",
-  "priority": 2,
-  "id": "12345678-1234-5678-1234-567812345678",
-  "status": "in_progress"
-}
+{"id":"12345678-1234-5678-1234-567812345678", "description":"Проверить входные данные JSONL-источника", "priority":2, "status":"new"}
+{"id":"87654321-4321-8765-4321-876543218765", "description":"Обновить статус задачи после обработки", "priority":3, "status":"in_progress"}
+{"description":"Сформировать итоговый отчёт"}
 ```
 
-### `MockExternalSource`
-- реализация находится в [`repository/api/mock.py`](repository/api/mock.py)
-- источник имитирует внешний API
-- получает сырой список задач во внутреннем `_fetch_tasks()`
-- преобразует каждый словарь в `Task`
-- при отсутствии `id` генерирует новый UUID
-- при отсутствии `priority` использует `1`
-- при отсутствии `status` оставляет значение по умолчанию
+## Use case и CLI
+- `ProcessTasks.execute()` принимает очередь и логирует каждый `Task`, при необходимости строит очередь из добавленных источников
+- `adapter/cli/main.py` собирает `MockExternalSource`, `TaskJsonSource` (по `--file`) и `RandomJobsSource` (по `--seed`), строит комбинированную очередь через `process.build_queue()`, при необходимости лениво применяет `filter_by_status(...)` и `filter_by_priority(...)`, после чего выполняет один потоковый проход по выбранной очереди
+- CLI аргументы: `--file` (по умолчанию `./tasks.jsonl`), `--seed` (по умолчанию `1`), `--status`, `--min-priority`, `--max-priority`
+- пример запуска:
 
-### `RandomJobsSource`
-- реализация находится в [`repository/generator/rand.py`](repository/generator/rand.py)
-- источник генерирует сырые записи задач с помощью `random.Random`
-- затем преобразует их в `Task`
-- создаёт UUID и случайные поля так, чтобы результат был воспроизводим при одинаковом seed
-- поддерживает проверку обязательных полей до создания доменного объекта
-- если `priority` отсутствует в сырой записи, использует `1`
+```bash
+uv run python -m adapter.cli.main --file ./tasks.jsonl --seed 42 --status in_progress --min-priority 2 --max-priority 4
+```
 
 ## Запуск и проверки
 Требуется Python 3.13+ и `uv`
 
 ### Через `make`
 
+Аргументы CLI можно передавать через переменную `ARGS`
+
 ```bash
 make install
 make run
+make run ARGS="--status in_progress"
+make run ARGS="--file ./tasks.jsonl --seed 42 --min-priority 2 --max-priority 4"
 make test
 make lint
 make typecheck
@@ -92,20 +87,3 @@ uv run pytest -v
 uv run ruff check .
 uv run mypy .
 ```
-
-### Аргументы CLI
-- `--file` — путь до JSON-файла с задачами, по умолчанию `./tasks.json`
-- `--seed` — seed для `RandomJobsSource`, по умолчанию `1`
-
-Пример запуска
-
-```bash
-uv run python -m adapter.cli.main --file ./tasks.json --seed 42
-```
-
-## Тесты
-- тесты дескрипторов находятся в [`test/test_string_descriptor.py`](test/test_string_descriptor.py) и [`test/test_int_descriptor.py`](test/test_int_descriptor.py)
-- тест non-data descriptor находится в [`test/test_non_data_descriptor.py`](test/test_non_data_descriptor.py)
-- прямые тесты модели `Task` находятся в [`test/test_task.py`](test/test_task.py) и [`test/test_task_default_priority.py`](test/test_task_default_priority.py)
-- тесты источников находятся в [`test/test_json_source.py`](test/test_json_source.py), [`test/test_mock_source.py`](test/test_mock_source.py) и [`test/test_rand_source.py`](test/test_rand_source.py)
-- покрываются UUID, статусы, обязательные поля, значения по умолчанию и ошибки валидации
